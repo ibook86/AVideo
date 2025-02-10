@@ -23,12 +23,13 @@ if (User::isAdmin()) {
 }
 
 $l = new LiveTransmition(0);
-$l->loadByUser(User::getId());
+$l->loadByUser($users_id);
 $l->setTitle($_REQUEST['title']);
 $l->setDescription($_REQUEST['description']);
 $l->setPassword($_REQUEST['password']);
 $l->setKey($_REQUEST['key']);
 $l->setCategories_id($categories_id);
+$l->setIsRebroadcast($_REQUEST['isRebroadcast']);
 $l->setPublicAutomatic();
 $l->setSaveTransmitionAutomatic();
 $l->setUsers_id($users_id);
@@ -37,7 +38,9 @@ if(empty($id)){
     forbiddenPage('Error on save');
 }
 
-$resp = array('error'=>false, 'msg'=>'Saved', 'userGroups'=>array());
+LiveTransmition::getFromDb($id, true);
+
+$resp = array('error'=>false, 'msg'=>'Saved', 'userGroups'=>array(), 'id'=>$id, 'LiveTransmition'=>LiveTransmition::getFromDb($id, true));
 
 $l = new LiveTransmition($id);
 $l->deleteGroupsTrasmition();

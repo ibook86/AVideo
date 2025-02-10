@@ -58,7 +58,7 @@ class LiveTransmitionHistory extends ObjectYPT
     {
         return $this->description;
     }
-    /** 
+    /**
      * @return string
      */
     public function getKey()
@@ -77,7 +77,7 @@ class LiveTransmitionHistory extends ObjectYPT
     }
 
     /**
-     * 
+     *
      * @return int
      */
     public function getUsers_id()
@@ -197,7 +197,7 @@ class LiveTransmitionHistory extends ObjectYPT
         $this->total_viewers = intval($total_viewers);
     }
     /**
-     * 
+     *
      * @param int $liveTransmitionHistory_id
      * @return array
      */
@@ -256,6 +256,7 @@ class LiveTransmitionHistory extends ObjectYPT
         $obj['live_transmitions_history_id'] = $liveTransmitionHistory_id;
         $obj['isPrivate'] = self::isPrivate($liveTransmitionHistory_id);
         $obj['isPasswordProtected'] = self::isPasswordProtected($liveTransmitionHistory_id);
+        $obj['isRebroadcast'] = self::isRebroadcast($liveTransmitionHistory_id);
         $obj['method'] = 'LiveTransmitionHistory::getApplicationObject';
         $_REQUEST['playlists_id_live'] = $_playlists_id_live;
         return $obj;
@@ -267,7 +268,27 @@ class LiveTransmitionHistory extends ObjectYPT
         $key = $lth->getKey();
         if (!empty($key)) {
             $lt = LiveTransmition::getFromKey($key);
+            if(AVideoPlugin::isEnabledByName('VideoPlaylistScheduler')){
+                if(VideoPlaylistScheduler::keyIsAPlaylistScheduler($key)){
+                    if(VideoPlaylistScheduler::keyIsAHidden($key)){
+                        return true;
+                    }
+                }
+            }
             if (empty($lt['public'])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static function isRebroadcast($liveTransmitionHistory_id)
+    {
+        $lth = new LiveTransmitionHistory($liveTransmitionHistory_id);
+        $key = $lth->getKey();
+        if (!empty($key)) {
+            $lt = LiveTransmition::getFromKey($key);
+            if (empty($lt['isRebroadcast'])) {
                 return true;
             }
         }
@@ -404,11 +425,11 @@ class LiveTransmitionHistory extends ObjectYPT
         }
         $limit = intval($limit);
         if (!empty($limit)) {
-            $sql .= "ORDER BY 
-            CASE 
-                WHEN finished IS NULL THEN 0 
-                ELSE 1 
-            END, 
+            $sql .= "ORDER BY
+            CASE
+                WHEN finished IS NULL THEN 0
+                ELSE 1
+            END,
             modified DESC
             LIMIT {$limit}";
         } else {
@@ -440,21 +461,30 @@ class LiveTransmitionHistory extends ObjectYPT
 
     public static function isLive($key, $live_servers_id = 0)
     {
-        global $global;
+        global $global, $lthIsLive;
+        if(empty($lthIsLive)){
+            $lthIsLive = array();
+        }
+        $index = "$key, $live_servers_id";
 
+        if(isset($lthIsLive[$index])){
+            return $lthIsLive[$index];
+        }
         $row = self::getActiveLiveFromUser(0, $live_servers_id, $key);
         //var_dump($key, $row);exit;
         if (empty($row)) {
+            $lthIsLive[$index] = false;
             return false;
         }
-        return self::getApplicationObject($row['id']);
+        $lthIsLive[$index] = self::getApplicationObject($row['id']);
+        return $lthIsLive[$index];
     }
 
     public static function getLatest($key = '', $live_servers_id = null, $active = false, $users_id = 0, $categories_id = 0)
     {
         global $global, $getLatestSQL;
 
-        $sql = "SELECT 
+        $sql = "SELECT
             lth.*,
             lt.id as live_transmitions_id,
             lt.categories_id
@@ -640,17 +670,23 @@ class LiveTransmitionHistory extends ObjectYPT
         return @$rows[0];
     }
 
-    public static function getLatestFromKey($key)
+    public static function getLatestFromKey($key, $strict = false)
     {
         global $global, $_getLatestFromKey;
         if (!self::isTableInstalled(static::getTableName())) {
             _error_log("Save error, table " . static::getTableName() . " does not exists", AVideoLog::$ERROR);
             return false;
         }
-        $parts = Live::getLiveParametersFromKey($key);
-        $key = $parts['cleanKey'];
 
-        $sql = "SELECT * FROM " . static::getTableName() . " WHERE `key` LIKE '{$key}%'  ";
+        $sql = "SELECT * FROM " . static::getTableName() . " WHERE ";
+
+        if(!$strict){
+            $parts = Live::getLiveParametersFromKey($key);
+            $key = $parts['cleanKey'];
+            $sql .= " `key` LIKE '{$key}%' ";
+        }else{
+            $sql .= " `key` = '{$key}' ";
+        }
 
         $sql .= " ORDER BY modified DESC, id DESC LIMIT 1";
 
@@ -676,6 +712,9 @@ class LiveTransmitionHistory extends ObjectYPT
     public static function getLastsLiveHistoriesFromUser($users_id, $count = 10, $finishedOnly = false)
     {
         global $global;
+        if(empty($users_id)){
+            return false;
+        }
         $sql = "SELECT * FROM " . static::getTableName() . " WHERE  `users_id` = ? ";
         if ($finishedOnly) {
             $sql .= " AND finished IS NOT NULL ";
@@ -698,7 +737,7 @@ class LiveTransmitionHistory extends ObjectYPT
         return $rows;
     }
 
-    public static function getActiveLives($live_servers_id = '', $checkLive = true)
+    public static function getActiveLives($live_servers_id = '', $checkLive = true, $users_id = 0)
     {
         global $global;
         if (!self::isTableInstalled(static::getTableName())) {
@@ -709,6 +748,12 @@ class LiveTransmitionHistory extends ObjectYPT
 
         $formats = "";
         $values = [];
+
+        if(!empty($users_id)){
+            $sql .= ' AND `users_id` = ? ';
+            $formats .= "i";
+            $values[] = $users_id;
+        }
 
         if (strtolower($live_servers_id) == 'null') {
             $sql .= ' AND `live_servers_id` IS NULL ';
@@ -830,7 +875,11 @@ class LiveTransmitionHistory extends ObjectYPT
 
     public function save()
     {
-        global $global;
+        global $global, $LiveTransmitionHistorySaved;
+        if(empty($LiveTransmitionHistorySaved)){
+            $LiveTransmitionHistorySaved = 0;
+        }
+        $LiveTransmitionHistorySaved++;
         //_error_log("LiveTransmitionHistory::save: ". json_encode(debug_backtrace()));
         _mysql_commit();
         if (empty($this->id)) {
@@ -863,14 +912,28 @@ class LiveTransmitionHistory extends ObjectYPT
             $this->users_id_company = 'NULL';
         }
 
+        $latest = self::getLatestFromKey($this->key);
+        if(!empty($latest) && $latest['users_id'] != $this->users_id){
+            _error_log("LiveTransmitionHistory::save: ERROR this key is for user {$latest['users_id']} ($this->users_id, $this->live_servers_id, $this->key) users_id=".User::getId().' IP='.getRealIpAddr().' ' . json_encode(debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS)));
+            $latest = self::getLatestFromUser($this->users_id);
+            if(empty($latest)){
+                _error_log("LiveTransmitionHistory::save: ERROR again, no latest key found");
+                $this->key = uniqid();
+            }else{
+                $this->key = $latest['key'];
+            }
+        }
+
         $this->max_viewers_sametime = intval($this->max_viewers_sametime);
         $this->total_viewers = intval($this->total_viewers);
 
         $id = parent::save();
-        //_error_log("LiveTransmitionHistory::save: id=$id ($this->users_id, $this->live_servers_id, $this->key) " . json_encode(debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS)));
+        _error_log("LiveTransmitionHistory::save: id=$id ($this->users_id, $this->live_servers_id, $this->key) users_id=".User::getId().' IP='.getRealIpAddr().' ' . json_encode(debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS)));
         _mysql_commit();
-        $cacheHandler = new LiveCacheHandler();
-        $cacheHandler->deleteCache();
+        if($LiveTransmitionHistorySaved==1){ // clear only once per session
+            $cacheHandler = new LiveCacheHandler();
+            $cacheHandler->deleteCache();
+        }
         return $id;
     }
 

@@ -44,11 +44,11 @@ if (!empty($_GET['u'])) {
             exit;
             /*
             if (count($info['otherLivesSameUser']) == 1) {
-                
+
             } else {
                 // list all lives available
             }
-             * 
+             *
              */
         }
     }
@@ -79,7 +79,11 @@ require_once $global['systemRootPath'] . 'plugin/Live/Objects/LiveTransmition.ph
 
 $users_id = User::getId();
 if (!empty($_GET['users_id']) && User::isAdmin()) {
-    $users_id = intval($_GET['users_id']);
+    $new_users_id = intval($_GET['users_id']);
+    echo "<!-- did change the users_id from $users_id to $new_users_id -->";
+    $users_id = $new_users_id;
+}else{
+    echo "<!-- did not change the users_id = $users_id -->";
 }
 
 // if user already have a key
@@ -195,7 +199,7 @@ include $global['systemRootPath'] . 'view/bootstrap/fileinput.php';
                 $poster = Live::getRegularPosterImage(User::getId(), $_REQUEST['live_servers_id'], 0, 0);
 
                 $liveStreamObject = new LiveStreamObject($trasnmition['key'], $trasnmition['live_servers_id']);
-                Live::getLiveControls($liveStreamObject->getKeyWithIndex(true,true), $trasnmition['live_servers_id']);   
+                Live::getLiveControls($liveStreamObject->getKeyWithIndex(true,true), $trasnmition['live_servers_id']);
                 ?>
             </ul>
         </div>
@@ -230,14 +234,28 @@ include $global['systemRootPath'] . 'view/bootstrap/fileinput.php';
     };
     var params = {};
     var attributes = {};
-
-    function saveStream() {
+    var isSavingStream = false;
+    function saveStream(_this = null) {
+        if(isSavingStream){
+            return false;
+        }
+        isSavingStream = true;
         modal.showPleaseWait();
 
         var selectedUserGroups = [];
         $('.userGroups:checked').each(function() {
             selectedUserGroups.push($(this).val());
         });
+
+        if($(_this).attr('id') == 'recordLive'){
+            if($(_this).is(":checked")){
+                $('#isRebroadcast').prop('checked', false);
+            }
+        }else if($(_this).attr('id') == 'isRebroadcast'){
+            if($(_this).is(":checked")){
+                $('#recordLive').prop('checked', false);
+            }
+        }
 
         $.ajax({
             url: webSiteRootURL + 'plugin/Live/saveLive.php',
@@ -248,6 +266,7 @@ include $global['systemRootPath'] . 'view/bootstrap/fileinput.php';
                 "key": "<?php echo $trasnmition['key']; ?>",
                 "listed": $('#listed').is(":checked"),
                 "saveTransmition": $('#recordLive').is(":checked"),
+                "isRebroadcast": $('#isRebroadcast').is(":checked"),
                 "userGroups": selectedUserGroups,
                 users_id: '<?php echo $users_id; ?>',
                 password: $('#password_livestream').val()
@@ -256,6 +275,7 @@ include $global['systemRootPath'] . 'view/bootstrap/fileinput.php';
             complete: function(resp) {
                 avideoResponse(resp);
                 modal.hidePleaseWait();
+                isSavingStream = false;
             }
         });
     }
